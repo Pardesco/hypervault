@@ -441,7 +441,7 @@ export class SceneManager {
         bounds: { ...bounds },
         color,
         objects: blockObjects,
-        handle: hitbox,
+        handle,
         projects: categoryProjects.get(category) || [],
       });
     }
