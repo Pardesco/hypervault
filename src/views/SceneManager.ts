@@ -404,11 +404,12 @@ export class SceneManager {
       this.scene.add(dot);
       blockObjects.push(dot);
 
-      // Simple drag handle at top-right corner
+      // Simple drag handle at top-right corner of outline
       const handleSize = 1.5;
       const handleHeight = 1.0;
-      const handleX = bounds.maxX + padding - handleSize / 2;
-      const handleZ = bounds.minZ - padding + handleSize / 2;
+      // Position at the corner of the outline (maxX + padding, minZ - padding)
+      const handleX = bounds.maxX + padding;
+      const handleZ = bounds.minZ - padding;
 
       // Small box handle
       const handleGeo = new THREE.BoxGeometry(handleSize, handleHeight, handleSize);
