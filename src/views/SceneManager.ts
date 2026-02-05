@@ -1030,10 +1030,6 @@ export class SceneManager {
         }
       }
 
-      // Move the drag handle
-      block.handle.position.x += deltaX;
-      block.handle.position.z += deltaZ;
-
       // Update bounds
       block.bounds.minX += deltaX;
       block.bounds.maxX += deltaX;
