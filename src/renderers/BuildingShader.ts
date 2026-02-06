@@ -29,10 +29,12 @@ export class BuildingShader {
         uniforms: {
           uColor: { value: new THREE.Color(0x00ff00) },
           uDecay: { value: 0.0 },
-          uActivity: { value: 0.5 },
+          uLitPercent: { value: 0.5 },
+          uPulse: { value: 0.0 },
           uTime: { value: 0.0 },
           uGlitch: { value: 0.0 },
           uScope: { value: 10.0 },
+          uTotalTasks: { value: 0.0 },
         },
         vertexShader,
         fragmentShader,
@@ -83,10 +85,12 @@ export class BuildingShader {
         uniforms: {
           uColor: { value: this.getStatusColor(project.status) },
           uDecay: { value: this.calculateDecay(project.lastModified) },
-          uActivity: { value: project.recentActivity ? 1.0 : 0.0 },
+          uLitPercent: { value: this.calculateLitPercent(project) },
+          uPulse: { value: 0.0 },
           uTime: { value: 0.0 },
           uGlitch: { value: project.status === 'blocked' ? 0.6 : 0.0 },
           uScope: { value: project.scope || project.noteCount || 10 },
+          uTotalTasks: { value: project.totalTasks ?? 0 },
         },
         vertexShader,
         fragmentShader,
@@ -115,5 +119,13 @@ export class BuildingShader {
     if (daysSince < 30) return 0.3;
     if (daysSince < 60) return 0.6;
     return 0.9;
+  }
+
+  private calculateLitPercent(project: ProjectData): number {
+    if (!project.totalTasks || project.totalTasks === 0) {
+      // Legacy: use recentActivity as before
+      return project.recentActivity ? 0.6 : 0.1;
+    }
+    return (project.completedTasks ?? 0) / project.totalTasks;
   }
 }

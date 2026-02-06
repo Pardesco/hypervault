@@ -22,8 +22,14 @@ export interface ProjectData {
   health: number;
   /** Number of notes in the project */
   noteCount: number;
+  /** Total task count (from frontmatter or checkbox parsing) */
+  totalTasks?: number;
+  /** Completed task count */
+  completedTasks?: number;
   /** Tech stack (e.g. ["Three.js", "TypeScript", "Vite"]) */
   stack?: string[];
+  /** Absolute path to project directory (for terminal launch) */
+  projectDir?: string;
 
   // Populated by layout engine
   position?: { x: number; y: number; z: number };
@@ -45,3 +51,6 @@ export interface Bounds {
   width: number;
   depth: number;
 }
+
+/** City activity state for Neural Core visualization */
+export type CityState = 'IDLE' | 'STREAMING' | 'BULK_UPDATE' | 'ERROR';

@@ -1,9 +1,11 @@
 uniform vec3 uColor;          // Base building color (status)
 uniform float uDecay;         // 0.0 = new, 1.0 = stale
-uniform float uActivity;      // 0.0 = inactive, 1.0 = glowing
+uniform float uLitPercent;    // 0.0-1.0 — task completion ratio
+uniform float uPulse;         // 0.0-1.0 — terminal active glow intensity
 uniform float uTime;          // For animations
 uniform float uGlitch;        // 0.0 = normal, 1.0 = blocked glitch
-uniform float uScope;         // File count (affects window density)
+uniform float uScope;         // File count (fallback window density)
+uniform float uTotalTasks;    // Task count (drives window grid density)
 
 varying vec2 vUv;
 varying vec3 vNormal;
@@ -20,23 +22,39 @@ float hash(float n) {
 
 void main() {
   // === WINDOW GRID ===
-  // Window density based on scope (more files = more windows)
-  float windowCols = 3.0 + floor(uScope / 20.0);
-  float windowRows = 5.0 + floor(uScope / 10.0);
-  windowCols = clamp(windowCols, 3.0, 8.0);
-  windowRows = clamp(windowRows, 5.0, 15.0);
+  // Task-based grid if tasks exist, else scope-based
+  float taskSource = uTotalTasks > 0.0 ? uTotalTasks : uScope;
+  float windowCols = 3.0 + floor(taskSource / 8.0);
+  float windowRows = 4.0 + floor(taskSource / 5.0);
+  windowCols = clamp(windowCols, 3.0, 10.0);
+  windowRows = clamp(windowRows, 4.0, 20.0);
 
   vec2 windowGrid = fract(vUv * vec2(windowCols, windowRows));
   float isWindow = step(0.15, windowGrid.x) * step(0.15, windowGrid.y) *
                    step(windowGrid.x, 0.85) * step(windowGrid.y, 0.85);
 
-  // Window ID for random lighting
+  // === FILL-FROM-BOTTOM ILLUMINATION ===
+  // Window ID (row 0 = bottom, row N-1 = top)
   vec2 windowID = floor(vUv * vec2(windowCols, windowRows));
-  float windowRand = random(windowID);
+  float rowPercent = (windowID.y + 1.0) / windowRows;
 
-  // Windows lit based on activity level
-  float lightOn = step(1.0 - uActivity, windowRand);
-  vec3 windowColor = vec3(1.0, 0.95, 0.7) * lightOn * 0.8;
+  // Lit if this row is below the completion line
+  float litBase = step(rowPercent, uLitPercent);
+
+  // Organic edge: partial row at the frontier gets random per-window fill
+  float frontierRow = floor(uLitPercent * windowRows);
+  float isFrontier = step(abs(windowID.y - frontierRow), 0.5);
+  float frontierRand = random(windowID);
+  float frontierLit = isFrontier * step(0.5, frontierRand);
+
+  float lightOn = max(litBase, frontierLit);
+
+  // Window color: warm amber, gold tint when fully complete
+  vec3 windowBaseColor = uLitPercent >= 1.0 ? vec3(1.0, 0.85, 0.4) : vec3(1.0, 0.95, 0.7);
+
+  // Terminal pulse: lit windows breathe brighter
+  float terminalPulse = uPulse * (sin(uTime * 3.0) * 0.3 + 0.3);
+  vec3 windowColor = windowBaseColor * (0.8 + terminalPulse) * lightOn;
 
   // === WALL COLOR ===
   vec3 decayColor = vec3(0.3, 0.25, 0.2);
@@ -73,16 +91,15 @@ void main() {
     }
   }
 
-  // === ACTIVITY GLOW ===
-  // Pulse effect for active projects
+  // === TERMINAL PULSE GLOW (replaces old activity glow) ===
   float pulse = sin(uTime * 3.0) * 0.5 + 0.5;
-  float glowAmount = uActivity * 0.2 * (0.7 + pulse * 0.3);
+  float glowAmount = uPulse * 0.25 * (0.7 + pulse * 0.3);
   finalColor += uColor * glowAmount;
 
   // === EDGE GLOW (rim lighting) ===
   float rim = 1.0 - max(dot(normalize(vNormal), vec3(0.0, 0.0, 1.0)), 0.0);
   rim = pow(rim, 2.0);
-  finalColor += uColor * rim * 0.3 * uActivity;
+  finalColor += uColor * rim * 0.3 * max(uPulse, uLitPercent * 0.3);
 
   // === DECAY DITHERING ===
   if (uDecay > 0.6) {

@@ -9,6 +9,8 @@ import type { ProjectData, District } from '../types';
 import type { BlockPosition, HypervaultSettings } from '../settings/SettingsTab';
 import { BuildingShader } from '../renderers/BuildingShader';
 import { GeometryFactory } from '../renderers/GeometryFactory';
+import { NeuralCore } from '../visuals/NeuralCore';
+import { ArteryManager } from '../visuals/ArteryManager';
 
 interface SceneManagerOptions {
   savedPositions?: BlockPosition[];
@@ -89,6 +91,17 @@ export class SceneManager {
   private composer: EffectComposer | null = null;
   private bloomPass: UnrealBloomPass | null = null;
 
+  // Neural Core and Data Arteries
+  private neuralCore: NeuralCore | null = null;
+  private arteryManager: ArteryManager | null = null;
+  private buildingPathMap: Map<string, THREE.Mesh> = new Map();
+
+  // Neural Core hit sphere for raycasting
+  private coreHitSphere: THREE.Mesh | null = null;
+
+  // Launch effect tracking
+  private launchEffects: Map<THREE.Mesh, { startTime: number; duration: number }> = new Map();
+
   constructor(container: HTMLElement, options?: SceneManagerOptions) {
     this.container = container;
     this.scene = new THREE.Scene();
@@ -128,6 +141,19 @@ export class SceneManager {
     if (this.useBloom) {
       this.initComposer();
     }
+
+    // Initialize Neural Core and Artery Manager
+    this.neuralCore = new NeuralCore({ position: new THREE.Vector3(0, 15, 0) });
+    this.scene.add(this.neuralCore);
+    this.arteryManager = new ArteryManager({ scene: this.scene });
+
+    // Invisible hit sphere for Neural Core raycasting (direct scene child)
+    const hitGeo = new THREE.SphereGeometry(5, 8, 8);
+    const hitMat = new THREE.MeshBasicMaterial({ opacity: 0, transparent: true });
+    this.coreHitSphere = new THREE.Mesh(hitGeo, hitMat);
+    this.coreHitSphere.position.copy(this.neuralCore.position);
+    this.coreHitSphere.userData = { isNeuralCore: true };
+    this.scene.add(this.coreHitSphere);
 
     this.container.addEventListener('mousemove', (e) => this.onMouseMove(e));
     this.container.addEventListener('mousedown', (e) => this.onMouseDown(e));
@@ -246,6 +272,10 @@ export class SceneManager {
   }
 
   buildCity(projects: ProjectData[], districts: Map<string, District>): void {
+    // Capture streaming state before clearing (clearCity destroys buildingPathMap)
+    const wasStreaming = this.arteryManager?.getIsStreaming() ?? false;
+    const streamingPath = this.arteryManager?.getStreamingPath() ?? null;
+
     this.clearCity();
     this.blockOffsets.clear();
     this.addGround(projects);
@@ -266,7 +296,16 @@ export class SceneManager {
     // Apply saved positions after initial layout
     this.applySavedPositions();
 
+    // Position Neural Core at city center
+    this.positionNeuralCore(projects);
+
     this.fitCameraToCity(projects);
+
+    // Re-establish streaming if it was active before rebuild
+    if (wasStreaming && streamingPath) {
+      this.arteryManager?.stopStream();
+      this.startStreaming(streamingPath);
+    }
   }
 
   private applySavedPositions(): void {
@@ -323,6 +362,7 @@ export class SceneManager {
     this.blocks.clear();
     this.dragHandles = [];
     this.shaderMaterials.clear();
+    this.buildingPathMap.clear();
   }
 
   private addGround(projects: ProjectData[]): void {
@@ -623,6 +663,9 @@ export class SceneManager {
 
     this.scene.add(mesh);
     this.buildings.push(mesh);
+
+    // Track building by project path for data flow targeting
+    this.buildingPathMap.set(project.path, mesh);
 
     // Edge glow - brighter for bloom pickup when enabled
     const edges = new THREE.EdgesGeometry(geometry);
@@ -1198,6 +1241,19 @@ export class SceneManager {
     this.animationId = requestAnimationFrame(this.animate);
 
     const elapsed = this.clock.getElapsedTime();
+    const delta = this.clock.getDelta();
+
+    // Update Neural Core and Data Arteries
+    if (this.neuralCore) {
+      this.neuralCore.animate(elapsed);
+    }
+    if (this.arteryManager) {
+      this.arteryManager.update(delta, elapsed);
+      // Update Neural Core state based on artery activity
+      if (this.neuralCore) {
+        this.neuralCore.setState(this.arteryManager.getCityState());
+      }
+    }
 
     // Update shader material uniforms
     for (const [mesh, material] of this.shaderMaterials) {
@@ -1209,10 +1265,10 @@ export class SceneManager {
         if (project.status === 'blocked') {
           material.uniforms.uGlitch.value = 0.5 + Math.sin(elapsed * 2) * 0.3;
         }
-        // Dynamic activity glow
-        if (project.status === 'active') {
-          material.uniforms.uActivity.value = 0.6 + Math.sin(elapsed * 1.5) * 0.3;
-        }
+        // Terminal pulse: active if this building is being streamed to
+        const streamingPath = this.arteryManager?.getStreamingPath();
+        const isBeingStreamed = streamingPath === project.path;
+        material.uniforms.uPulse.value = isBeingStreamed ? 1.0 : 0.0;
       }
     }
 
@@ -1247,6 +1303,31 @@ export class SceneManager {
             // Very subtle pulse
             mat.emissiveIntensity = 0.08 + Math.sin(elapsed * 0.8) * 0.04;
             break;
+        }
+      }
+    }
+
+    // Process launch effects (dramatic pulse when launching Claude)
+    const now = performance.now();
+    for (const [building, effect] of this.launchEffects) {
+      const age = now - effect.startTime;
+      const progress = age / effect.duration;
+
+      if (progress >= 1.0) {
+        // Effect complete, remove
+        this.launchEffects.delete(building);
+      } else {
+        // Apply dramatic launch effect
+        const mat = building.material as THREE.MeshStandardMaterial;
+        if (mat.emissiveIntensity !== undefined) {
+          // Bright flash that fades
+          const flash = Math.sin(progress * Math.PI) * 2.0;
+          const pulse = Math.sin(progress * Math.PI * 6) * 0.5;
+          mat.emissiveIntensity = 0.5 + flash + pulse;
+
+          // Scale pulse for drama
+          const scalePulse = 1.0 + Math.sin(progress * Math.PI * 4) * 0.05;
+          building.scale.setScalar(scalePulse);
         }
       }
     }
@@ -1306,6 +1387,23 @@ export class SceneManager {
     if (this.composer) {
       this.composer.dispose();
     }
+    // Cleanup Neural Core hit sphere
+    if (this.coreHitSphere) {
+      this.scene.remove(this.coreHitSphere);
+      this.coreHitSphere.geometry.dispose();
+      (this.coreHitSphere.material as THREE.Material).dispose();
+      this.coreHitSphere = null;
+    }
+    // Cleanup Neural Core and Artery Manager
+    if (this.neuralCore) {
+      this.scene.remove(this.neuralCore);
+      this.neuralCore.dispose();
+      this.neuralCore = null;
+    }
+    if (this.arteryManager) {
+      this.arteryManager.dispose();
+      this.arteryManager = null;
+    }
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labelRenderer.domElement.remove();
@@ -1330,4 +1428,145 @@ export class SceneManager {
 
   getFocusedProject(): ProjectData | null { return this.focusedProject; }
   setFocusedProject(project: ProjectData | null): void { this.focusedProject = project; }
+
+  /** Position the Neural Core at the center of the city */
+  private positionNeuralCore(projects: ProjectData[]): void {
+    if (!this.neuralCore || projects.length === 0) return;
+
+    let minX = Infinity, maxX = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+
+    for (const p of projects) {
+      if (!p.position) continue;
+      minX = Math.min(minX, p.position.x);
+      maxX = Math.max(maxX, p.position.x);
+      minZ = Math.min(minZ, p.position.z);
+      maxZ = Math.max(maxZ, p.position.z);
+    }
+
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minZ + maxZ) / 2;
+
+    // Position core at city center, elevated above buildings
+    this.neuralCore.position.set(centerX, 25, centerZ);
+
+    // Keep hit sphere in sync
+    if (this.coreHitSphere) {
+      this.coreHitSphere.position.copy(this.neuralCore.position);
+    }
+  }
+
+  /** Trigger a data flow animation from Neural Core to a building */
+  triggerFlow(projectPath: string): void {
+    if (!this.neuralCore || !this.arteryManager) return;
+
+    const building = this.buildingPathMap.get(projectPath);
+    if (!building) return;
+
+    const project = building.userData.project as ProjectData;
+    if (!project || !project.dimensions) return;
+
+    this.arteryManager.spawnArtery(
+      this.neuralCore,
+      building.position.clone(),
+      projectPath,
+      project.dimensions.height + 0.8 // Account for foundation
+    );
+  }
+
+  /** Trigger a dramatic launch effect on a building (for terminal launch) */
+  triggerLaunchEffect(projectPath: string): void {
+    const building = this.buildingPathMap.get(projectPath);
+    if (!building) return;
+
+    // Start tracking this building for the launch effect
+    this.launchEffects.set(building, {
+      startTime: performance.now(),
+      duration: 1500, // 1.5 second effect
+    });
+
+    // Also trigger the data flow
+    this.triggerFlow(projectPath);
+
+    console.log('[Hypervault] Launch effect triggered for:', projectPath);
+  }
+
+  /** Start continuous streaming to a project (for Claude Code activity) */
+  startStreaming(projectPath: string): void {
+    if (!this.neuralCore || !this.arteryManager) return;
+
+    const building = this.buildingPathMap.get(projectPath);
+    if (!building) {
+      console.log('[Hypervault] No building found for path:', projectPath);
+      return;
+    }
+
+    const project = building.userData.project as ProjectData;
+    if (!project || !project.dimensions) return;
+
+    console.log('[Hypervault] Starting stream to:', project.title);
+
+    this.arteryManager.startStream(
+      this.neuralCore,
+      building.position.clone(),
+      projectPath,
+      project.dimensions.height + 0.8
+    );
+  }
+
+  /** Stop continuous streaming */
+  stopStreaming(): void {
+    if (!this.arteryManager) return;
+
+    console.log('[Hypervault] Stopping stream');
+    this.arteryManager.stopStream();
+  }
+
+  /** Check if currently streaming */
+  isStreaming(): boolean {
+    return this.arteryManager?.getIsStreaming() ?? false;
+  }
+
+  /** Find a project by partial name match (for fuzzy matching from Claude status) */
+  findProjectByName(name: string): ProjectData | null {
+    const lowerName = name.toLowerCase();
+
+    // First try exact match on title
+    for (const [path, building] of this.buildingPathMap) {
+      const project = building.userData.project as ProjectData;
+      if (project.title.toLowerCase() === lowerName) {
+        return project;
+      }
+    }
+
+    // Then try partial match
+    for (const [path, building] of this.buildingPathMap) {
+      const project = building.userData.project as ProjectData;
+      if (project.title.toLowerCase().includes(lowerName) ||
+          lowerName.includes(project.title.toLowerCase())) {
+        return project;
+      }
+    }
+
+    // Try matching on path
+    for (const [path, building] of this.buildingPathMap) {
+      const project = building.userData.project as ProjectData;
+      if (path.toLowerCase().includes(lowerName)) {
+        return project;
+      }
+    }
+
+    // Try matching on projectDir folder name
+    for (const [path, building] of this.buildingPathMap) {
+      const project = building.userData.project as ProjectData;
+      if (project.projectDir) {
+        const dirName = project.projectDir.split(/[/\\]/).pop()?.toLowerCase();
+        if (dirName && (dirName.includes(lowerName) || lowerName.includes(dirName))) {
+          return project;
+        }
+      }
+    }
+
+    return null;
+  }
 }

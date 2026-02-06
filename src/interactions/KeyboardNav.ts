@@ -13,6 +13,7 @@ export class KeyboardNav {
   private onCycleStale: (() => void) | null = null;
   private onJumpToProject: ((index: number) => void) | null = null;
   private onResetCamera: (() => void) | null = null;
+  private onDebugFlow: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -37,11 +38,13 @@ export class KeyboardNav {
     onCycleStale?: () => void;
     onJumpToProject?: (index: number) => void;
     onResetCamera?: () => void;
+    onDebugFlow?: () => void;
   }): void {
     this.onCycleBlocked = handlers.onCycleBlocked ?? null;
     this.onCycleStale = handlers.onCycleStale ?? null;
     this.onJumpToProject = handlers.onJumpToProject ?? null;
     this.onResetCamera = handlers.onResetCamera ?? null;
+    this.onDebugFlow = handlers.onDebugFlow ?? null;
   }
 
   private handleKeyPress(event: KeyboardEvent): void {
@@ -65,6 +68,11 @@ export class KeyboardNav {
       case ' ':
         event.preventDefault();
         this.onResetCamera?.();
+        break;
+      case 't':
+      case 'T':
+        event.preventDefault();
+        this.onDebugFlow?.();
         break;
     }
   }

@@ -26,8 +26,11 @@ export class VisualEncoder {
     return 0.9;
   }
 
-  /** Calculate activity glow (0 or 1) */
-  getActivity(project: ProjectData): number {
-    return project.recentActivity ? 1.0 : 0.0;
+  /** Calculate lit window percentage (0.0-1.0) based on task completion */
+  getLitPercent(project: ProjectData): number {
+    if (project.totalTasks && project.totalTasks > 0) {
+      return (project.completedTasks ?? 0) / project.totalTasks;
+    }
+    return project.recentActivity ? 0.6 : 0.1;
   }
 }

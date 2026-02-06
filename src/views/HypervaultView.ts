@@ -1,10 +1,14 @@
-import { ItemView, WorkspaceLeaf, App, Notice } from 'obsidian';
+import { ItemView, WorkspaceLeaf, App, Notice, TFile, Menu } from 'obsidian';
+import { existsSync } from 'fs';
+import * as path from 'path';
 import { SceneManager } from './SceneManager';
 import { ProjectParser } from '../parsers/ProjectParser';
 import { MetadataExtractor } from '../parsers/MetadataExtractor';
 import { BinPacker } from '../layout/BinPacker';
-import { BuildingRaycaster } from '../interactions/Raycaster';
+import { BuildingRaycaster, type RaycastHit } from '../interactions/Raycaster';
 import { KeyboardNav } from '../interactions/KeyboardNav';
+import { ActivityMonitor, type ActivityStatus } from '../monitors/ActivityMonitor';
+import { TerminalLauncher } from '../utils/TerminalLauncher';
 import type { HypervaultSettings, BlockPosition } from '../settings/SettingsTab';
 import type { ProjectData } from '../types';
 import type HypervaultPlugin from '../main';
@@ -19,6 +23,8 @@ export class HypervaultView extends ItemView {
   private metadataExtractor: MetadataExtractor | null = null;
   private raycaster: BuildingRaycaster | null = null;
   private keyboardNav: KeyboardNav | null = null;
+  private activityMonitor: ActivityMonitor | null = null;
+  private activityIndicator: HTMLElement | null = null;
   private projects: ProjectData[] = [];
 
   constructor(leaf: WorkspaceLeaf, app: App, plugin: HypervaultPlugin) {
@@ -76,12 +82,23 @@ export class HypervaultView extends ItemView {
       this.app.workspace.openLinkText(hit.project.path, '', false);
     });
 
+    // Set up right-click context menu for buildings
+    this.raycaster.setRightClickHandler((hit, event) => {
+      this.showBuildingContextMenu(hit, event);
+    });
+
+    // Set up right-click on Neural Core orb
+    this.raycaster.setOrbRightClickHandler((event) => {
+      this.showOrbContextMenu(event);
+    });
+
     // Set up focus-safe keyboard navigation
     this.keyboardNav = new KeyboardNav(this.sceneManager.getCanvas());
     this.keyboardNav.setHandlers({
       onCycleBlocked: () => this.cycleByStatus('blocked'),
       onCycleStale: () => this.cycleByStatus('paused'),
       onResetCamera: () => this.sceneManager?.resetCamera(),
+      onDebugFlow: () => this.triggerRandomFlow(),
     });
 
     // Parse projects and build city
@@ -94,11 +111,38 @@ export class HypervaultView extends ItemView {
       2000,
     );
     this.metadataExtractor.startWatching();
+
+    // Watch for file modifications to trigger data flow animations
+    this.registerEvent(
+      this.app.vault.on('modify', (file) => {
+        if (file instanceof TFile) {
+          this.onFileModified(file.path);
+        }
+      })
+    );
+
+    // Initialize Claude Code activity monitor
+    this.activityMonitor = new ActivityMonitor(this.app, {
+      onActivityStart: (status) => this.onClaudeActivityStart(status),
+      onActivityUpdate: (status) => this.onClaudeActivityUpdate(status),
+      onActivityStop: () => this.onClaudeActivityStop(),
+      onProjectChange: (newProject, oldProject) => {
+        console.log('[Hypervault] Project changed:', oldProject, '->', newProject);
+      },
+    });
+    this.activityMonitor.start();
+
+    // Add activity indicator overlay
+    this.addActivityIndicator(container);
+
+    // Add HUD title
+    this.addHudTitle(container);
   }
 
   async onClose(): Promise<void> {
     this.metadataExtractor?.stopWatching();
     this.keyboardNav?.dispose();
+    this.activityMonitor?.stop();
 
     if (this.sceneManager) {
       this.sceneManager.dispose();
@@ -221,5 +265,342 @@ export class HypervaultView extends ItemView {
     this.plugin.settings.blockPositions = positions;
     await this.plugin.saveSettings();
     new Notice('City layout saved!');
+  }
+
+  /** Debug: Trigger a random data flow for testing */
+  private triggerRandomFlow(): void {
+    if (this.projects.length === 0 || !this.sceneManager) return;
+    const randomProject = this.projects[Math.floor(Math.random() * this.projects.length)];
+    console.log('[Hypervault] Debug flow triggered for:', randomProject.title);
+    this.sceneManager.triggerFlow(randomProject.path);
+  }
+
+  /** Handle file modifications to trigger data flow animations */
+  private onFileModified(filePath: string): void {
+    // Find project that matches this file path
+    // Either the project's main note or a file within the project folder
+    const project = this.projects.find(p => {
+      // Direct match - the project note itself was modified
+      if (filePath === p.path) return true;
+      // Folder match - a file within the project's folder was modified
+      // Project folders are named same as the note (without .md extension)
+      const projectFolder = p.path.replace(/\.md$/, '/');
+      return filePath.startsWith(projectFolder);
+    });
+
+    if (project && this.sceneManager) {
+      this.sceneManager.triggerFlow(project.path);
+    }
+  }
+
+  /** Add activity indicator overlay */
+  private addActivityIndicator(container: HTMLElement): void {
+    const indicator = document.createElement('div');
+    indicator.className = 'hypervault-activity-indicator';
+    indicator.innerHTML = `
+      <div class="activity-status">
+        <span class="activity-dot"></span>
+        <span class="activity-text">IDLE</span>
+      </div>
+      <div class="activity-project"></div>
+      <div class="activity-action"></div>
+    `;
+    indicator.style.display = 'none'; // Hidden by default
+    container.appendChild(indicator);
+    this.activityIndicator = indicator;
+  }
+
+  /** Handle Claude Code activity start */
+  private onClaudeActivityStart(status: ActivityStatus): void {
+    console.log('[Hypervault] Claude activity started:', status);
+
+    this.updateActivityIndicator(status, true);
+
+    if (!this.sceneManager || !status.project) return;
+
+    // Try to find the project in our city
+    const project = this.sceneManager.findProjectByName(status.project);
+    if (project) {
+      this.sceneManager.startStreaming(project.path);
+    } else {
+      console.log('[Hypervault] No matching project found for:', status.project);
+    }
+  }
+
+  /** Handle Claude Code activity update */
+  private onClaudeActivityUpdate(status: ActivityStatus): void {
+    this.updateActivityIndicator(status, true);
+
+    // Check if project changed
+    if (!this.sceneManager || !status.project) return;
+
+    const currentStreamPath = this.sceneManager.isStreaming();
+    const project = this.sceneManager.findProjectByName(status.project);
+
+    if (project && !this.sceneManager.isStreaming()) {
+      // Not currently streaming, start streaming to the new project
+      this.sceneManager.startStreaming(project.path);
+    }
+  }
+
+  /** Handle Claude Code activity stop */
+  private onClaudeActivityStop(): void {
+    console.log('[Hypervault] Claude activity stopped');
+
+    this.updateActivityIndicator(null, false);
+
+    if (this.sceneManager) {
+      this.sceneManager.stopStreaming();
+    }
+  }
+
+  /** Update the activity indicator display */
+  private updateActivityIndicator(status: ActivityStatus | null, active: boolean): void {
+    if (!this.activityIndicator) return;
+
+    if (active && status) {
+      this.activityIndicator.style.display = 'block';
+      this.activityIndicator.classList.add('active');
+
+      const dot = this.activityIndicator.querySelector('.activity-dot') as HTMLElement;
+      const text = this.activityIndicator.querySelector('.activity-text') as HTMLElement;
+      const projectEl = this.activityIndicator.querySelector('.activity-project') as HTMLElement;
+      const actionEl = this.activityIndicator.querySelector('.activity-action') as HTMLElement;
+
+      if (dot) dot.classList.add('pulsing');
+      if (text) text.textContent = 'STREAMING';
+      if (projectEl) projectEl.textContent = status.project || '';
+      if (actionEl) actionEl.textContent = status.action || '';
+    } else {
+      this.activityIndicator.classList.remove('active');
+
+      const dot = this.activityIndicator.querySelector('.activity-dot') as HTMLElement;
+      const text = this.activityIndicator.querySelector('.activity-text') as HTMLElement;
+
+      if (dot) dot.classList.remove('pulsing');
+      if (text) text.textContent = 'IDLE';
+
+      // Hide after a short delay
+      setTimeout(() => {
+        if (this.activityIndicator && !this.activityMonitor?.isCurrentlyActive()) {
+          this.activityIndicator.style.display = 'none';
+        }
+      }, 2000);
+    }
+  }
+
+  /** Show context menu for right-clicked building */
+  private showBuildingContextMenu(hit: RaycastHit, event: MouseEvent): void {
+    const menu = new Menu();
+    const project = hit.project;
+
+    // Resolve the project directory path
+    const projectPath = this.resolveProjectPath(project);
+
+    menu.addItem((item) => {
+      item
+        .setTitle('🚀 Launch Claude')
+        .setIcon('terminal')
+        .onClick(async () => {
+          await this.launchClaudeForProject(project, projectPath);
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('📂 Open in Explorer')
+        .setIcon('folder-open')
+        .onClick(async () => {
+          const result = await TerminalLauncher.openInExplorer(projectPath);
+          if (result.success) {
+            new Notice(`Opened ${project.title} folder`);
+          } else {
+            new Notice(`Failed to open folder: ${result.message}`);
+          }
+        });
+    });
+
+    menu.addSeparator();
+
+    menu.addItem((item) => {
+      item
+        .setTitle('📝 Open Note')
+        .setIcon('file-text')
+        .onClick(() => {
+          this.app.workspace.openLinkText(project.path, '', false);
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('🎯 Focus Camera')
+        .setIcon('crosshair')
+        .onClick(() => {
+          if (project.position && this.sceneManager) {
+            this.sceneManager.focusOnPosition(project.position);
+            this.sceneManager.setFocusedProject(project);
+          }
+        });
+    });
+
+    menu.showAtMouseEvent(event);
+  }
+
+  /** Resolve the best path for a project's working directory */
+  private resolveProjectPath(project: ProjectData): string {
+    const vaultBasePath = (this.app.vault.adapter as any).basePath as string;
+
+    // Priority 1: Explicit projectDir from frontmatter
+    if (project.projectDir) {
+      // If it's an absolute path, use it directly
+      if (path.isAbsolute(project.projectDir)) {
+        if (existsSync(project.projectDir)) {
+          return project.projectDir;
+        }
+      } else {
+        // Relative to vault
+        const resolved = path.join(vaultBasePath, project.projectDir);
+        if (existsSync(resolved)) {
+          return resolved;
+        }
+      }
+    }
+
+    // Priority 2: Folder with same name as note (without .md)
+    const noteFolderPath = path.join(vaultBasePath, project.path.replace(/\.md$/, ''));
+    if (existsSync(noteFolderPath)) {
+      return noteFolderPath;
+    }
+
+    // Priority 3: Parent folder of the note
+    const noteParentPath = path.join(vaultBasePath, path.dirname(project.path));
+    if (existsSync(noteParentPath) && noteParentPath !== vaultBasePath) {
+      return noteParentPath;
+    }
+
+    // Priority 4: Vault root
+    return vaultBasePath;
+  }
+
+  /** Launch Claude Code for a project */
+  private async launchClaudeForProject(project: ProjectData, projectPath: string): Promise<void> {
+    new Notice(`🚀 Launching Claude for ${project.title}...`);
+
+    // Trigger visual launch effect (dramatic pulse + data flow)
+    if (this.sceneManager) {
+      this.sceneManager.triggerLaunchEffect(project.path);
+    }
+
+    const result = await TerminalLauncher.launch({
+      projectPath,
+      command: 'claude',
+      projectName: project.title,
+    });
+
+    if (result.success) {
+      new Notice(`✓ Terminal launched for ${project.title}`);
+    } else {
+      new Notice(`✗ Launch failed: ${result.message}`);
+    }
+  }
+
+  /** Add neon HUD title at top center */
+  private addHudTitle(container: HTMLElement): void {
+    const title = document.createElement('div');
+    title.className = 'hypervault-hud-title';
+    Object.assign(title.style, {
+      position: 'absolute',
+      top: '14px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      fontFamily: 'monospace',
+      fontSize: '16px',
+      fontWeight: '700',
+      letterSpacing: '6px',
+      color: '#b366ff',
+      textShadow: '0 0 12px #b366ff, 0 0 24px rgba(179,102,255,0.4)',
+      background: 'rgba(10, 10, 20, 0.6)',
+      border: '1px solid rgba(179, 102, 255, 0.2)',
+      borderRadius: '4px',
+      padding: '6px 18px',
+      zIndex: '200',
+      pointerEvents: 'none',
+      userSelect: 'none',
+    });
+
+    const cursor = document.createElement('span');
+    cursor.textContent = '\u2588';
+    cursor.style.animation = 'cursor-blink 1.06s step-end infinite';
+    title.textContent = 'HYPERVAULT';
+    title.appendChild(cursor);
+
+    // Inject cursor blink keyframes if not already present
+    if (!document.getElementById('hypervault-cursor-anim')) {
+      const style = document.createElement('style');
+      style.id = 'hypervault-cursor-anim';
+      style.textContent = '@keyframes cursor-blink { 0%,50%{opacity:1} 50.01%,100%{opacity:0} }';
+      document.head.appendChild(style);
+    }
+
+    container.appendChild(title);
+  }
+
+  /** Show context menu for right-clicked Neural Core orb */
+  private showOrbContextMenu(event: MouseEvent): void {
+    const menu = new Menu();
+
+    menu.addItem((item) => {
+      item
+        .setTitle('Launch Claude Code...')
+        .setIcon('terminal')
+        .onClick(async () => {
+          await this.launchClaudeFromOrb();
+        });
+    });
+
+    menu.showAtMouseEvent(event);
+  }
+
+  /** Launch Claude Code from orb — opens folder picker first */
+  private async launchClaudeFromOrb(): Promise<void> {
+    try {
+      // Use Electron's dialog for folder selection
+      const electron = require('electron');
+      const remote = electron.remote || (electron as any).default?.remote;
+      const dialog = remote?.dialog;
+
+      if (!dialog) {
+        new Notice('Folder picker not available (requires Obsidian desktop)');
+        return;
+      }
+
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory', 'createDirectory'],
+        title: 'Select folder for Claude Code',
+      });
+
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return;
+      }
+
+      const selectedFolder = result.filePaths[0];
+      const projectName = path.basename(selectedFolder);
+
+      new Notice(`🚀 Launching Claude in ${projectName}...`);
+
+      const launchResult = await TerminalLauncher.launch({
+        projectPath: selectedFolder,
+        command: 'claude',
+        projectName,
+      });
+
+      if (launchResult.success) {
+        new Notice(`✓ Terminal launched in ${projectName}`);
+      } else {
+        new Notice(`✗ Launch failed: ${launchResult.message}`);
+      }
+    } catch (e) {
+      new Notice('Folder picker not available (requires Obsidian desktop)');
+    }
   }
 }

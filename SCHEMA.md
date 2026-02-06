@@ -39,6 +39,10 @@ The detection tag can be customized in plugin settings (default: `project`).
 | `scope` | `number` | file size estimate | **Base footprint size** (larger = more complex) |
 | `health` | `number` (0-100) | derived from status | Health percentage for tooltip |
 | `noteCount` | `number` | `1` | Scope fallback + tooltip display |
+| `tasks` | `number` | parsed from checkboxes | **Window grid density** + total window count |
+| `tasks_done` | `number` | parsed from checkboxes | **Lit windows** (fill from bottom) |
+| `stack` | `string[]` or CSV | — | **Tech stack** shown on foundation hover |
+| `projectDir` | `string` | — | **Project directory** path for terminal launch (absolute or vault-relative) |
 
 ### Status Values → Building Color
 
@@ -89,6 +93,22 @@ noteCount: 12
 ---
 ```
 
+## Example: Task-Based Progress
+
+When `tasks` and `tasks_done` are provided, building windows fill from the bottom to visualize progress. If omitted, checkboxes (`- [x]` / `- [ ]`) in the note body are counted automatically.
+
+```yaml
+---
+tags: [project]
+title: Trading Bot
+status: active
+priority: high
+category: trading
+tasks: 15
+tasks_done: 8
+---
+```
+
 ## Example: AI-Generated Entry
 
 When an AI tool (like Claude Code) scans a project directory, it should create or update a note in the user's vault with frontmatter like this:
@@ -104,6 +124,8 @@ category: obsidian-plugins
 scope: 30
 health: 85
 noteCount: 28
+stack: [TypeScript, Three.js, Zustand, esbuild]
+projectDir: C:\Users\Randall\Documents\hypervault
 ---
 
 # hypervault

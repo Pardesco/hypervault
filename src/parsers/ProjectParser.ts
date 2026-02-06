@@ -46,6 +46,9 @@ export class ProjectParser {
 
     if (!hasProjectTag) return null;
 
+    // Parse task data from frontmatter or checkbox fallback
+    const taskData = await this.parseTasks(fm, file);
+
     // Extract project metadata from frontmatter
     return {
       path: file.path,
@@ -59,7 +62,9 @@ export class ProjectParser {
       recentActivity: this.isRecentlyActive(file.stat.mtime),
       health: this.calculateHealth(fm),
       noteCount: fm.noteCount ?? 1,
+      ...taskData,
       stack: this.parseStack(fm.stack),
+      projectDir: typeof fm.projectDir === 'string' ? fm.projectDir : undefined,
     };
   }
 
@@ -139,6 +144,38 @@ export class ProjectParser {
       complete: 100,
     };
     return statusHealth[String(fm.status ?? 'active').toLowerCase()] ?? 60;
+  }
+
+  private async parseTasks(
+    fm: Record<string, unknown>,
+    file: TFile,
+  ): Promise<{ totalTasks?: number; completedTasks?: number }> {
+    // Priority: frontmatter fields
+    if (typeof fm.tasks === 'number' && fm.tasks > 0) {
+      return {
+        totalTasks: fm.tasks,
+        completedTasks: typeof fm.tasks_done === 'number' ? fm.tasks_done : 0,
+      };
+    }
+
+    // Fallback: count checkboxes in file content
+    try {
+      const content = await this.app.vault.cachedRead(file);
+      const completedPattern = /- \[[xX]\]/g;
+      const incompletePattern = /- \[ \]/g;
+
+      const completed = (content.match(completedPattern) || []).length;
+      const incomplete = (content.match(incompletePattern) || []).length;
+      const total = completed + incomplete;
+
+      if (total > 0) {
+        return { totalTasks: total, completedTasks: completed };
+      }
+    } catch {
+      // Silently fail — leave tasks undefined
+    }
+
+    return {};
   }
 
   private parseStack(raw: unknown): string[] | undefined {

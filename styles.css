@@ -291,3 +291,119 @@
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Claude Code Activity Indicator */
+.hypervault-activity-indicator {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: linear-gradient(135deg, rgba(10, 20, 30, 0.95), rgba(5, 15, 25, 0.95));
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: var(--font-monospace, monospace);
+  z-index: 150;
+  min-width: 140px;
+  backdrop-filter: blur(8px);
+  transition: all 0.3s ease;
+}
+
+.hypervault-activity-indicator.active {
+  border-color: rgba(0, 255, 255, 0.6);
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.2), inset 0 0 20px rgba(0, 255, 255, 0.05);
+}
+
+.hypervault-activity-indicator .activity-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.hypervault-activity-indicator .activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(100, 100, 120, 0.6);
+  transition: all 0.3s ease;
+}
+
+.hypervault-activity-indicator .activity-dot.pulsing {
+  background: #00ffff;
+  box-shadow: 0 0 8px #00ffff, 0 0 16px rgba(0, 255, 255, 0.5);
+  animation: activity-pulse 1s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 8px #00ffff, 0 0 16px rgba(0, 255, 255, 0.5);
+  }
+  50% {
+    transform: scale(1.2);
+    box-shadow: 0 0 12px #00ffff, 0 0 24px rgba(0, 255, 255, 0.7);
+  }
+}
+
+.hypervault-activity-indicator .activity-text {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: rgba(150, 150, 170, 0.8);
+  transition: color 0.3s ease;
+}
+
+.hypervault-activity-indicator.active .activity-text {
+  color: #00ffff;
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
+}
+
+.hypervault-activity-indicator .activity-project {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.hypervault-activity-indicator .activity-action {
+  font-size: 9px;
+  color: rgba(150, 180, 200, 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+/* HUD Title */
+.hypervault-hud-title {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-monospace, monospace);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #b366ff;
+  text-shadow: 0 0 12px #b366ff, 0 0 24px rgba(179, 102, 255, 0.4);
+  background: rgba(10, 10, 20, 0.6);
+  border: 1px solid rgba(179, 102, 255, 0.2);
+  border-radius: 4px;
+  padding: 6px 18px;
+  z-index: 100;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hypervault-cursor {
+  animation: cursor-blink 1.06s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
