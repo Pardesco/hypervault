@@ -78,4 +78,4 @@ Built with [Three.js](https://threejs.org/), [Zustand](https://github.com/pmndrs
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE) — Free to use, modify, and distribute. Any modified version that is deployed must also be open-sourced under AGPL-3.0.
