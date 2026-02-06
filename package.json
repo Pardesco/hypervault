@@ -15,8 +15,8 @@
     "code-city",
     "dashboard"
   ],
-  "author": "Randall Groves",
-  "license": "MIT",
+  "author": "Randall Morgan",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "three": "^0.160.0",
     "zustand": "^4.4.0"

@@ -4,7 +4,8 @@
 **Project Codename**: Hypervault  
 **Positioning**: 3D Code City Dashboard for Personal Knowledge Management  
 **Date**: February 2026  
-**Author**: Randall Groves / @pardesco_  
+**Author**: Randall Morgan / [@pardesco_](https://x.com/pardesco_)
+**License**: AGPL-3.0
 **Status**: Technical Review Complete - Ready for Implementation
 
 ---
